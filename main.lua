@@ -1,4 +1,42 @@
 --[[
+    RIVA HUB - RIVALS SCRIPT (MAIN)
+    Developer: elpingus
+    
+    WARNING: This script is protected. Do not execute directly.
+    Use the Key System Loader: key-system.lua
+]]
+
+-- Anti-Detection: Wait for game load
+repeat task.wait() until game:IsLoaded()
+
+-- Auth Verification
+if not getgenv().RivaHubAuth or not getgenv().RivaHubAuth.Verified then
+    warn("[Riva Hub] Unauthorized access! Please use the key system loader.")
+    -- For testing purposes, you can uncomment the line below:
+    -- getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
+    return
+end
+
+-- Verify time token (valid for 5 minutes)
+local authTime = getgenv().RivaHubAuth.Time or 0
+if os.time() - authTime > 300 then
+    warn("[Riva Hub] Auth token expired! Please reload via key system.")
+    getgenv().RivaHubAuth = nil
+    return
+end
+
+print("[Riva Hub] Authentication verified! Loading script...")
+
+-- Auto-Rejoin: Queue script to run after teleport
+if queue_on_teleport then
+    local teleportScript = [[
+        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua?nocache=" .. os.time()))()
+    ]]
+    queue_on_teleport(teleportScript)
+    print("[Riva Hub] Auto-rejoin enabled! Script will re-inject after teleport.")
+end
+--[[
     RIVA HUB - RIVALS SCRIPT
     Full ESP, Aimbot, Visuals
     Developer: elpingus
