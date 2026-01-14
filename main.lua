@@ -22,6 +22,17 @@ end
 
 print("[Riva Hub] Authentication verified! Loading script...")
 
+-- Auto-Rejoin: Queue script to run after teleport
+if queue_on_teleport then
+    -- Preserve auth for next server
+    local teleportScript = [[
+        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua?nocache=" .. os.time()))()
+    ]]
+    queue_on_teleport(teleportScript)
+    print("[Riva Hub] Auto-rejoin enabled! Script will re-inject after teleport.")
+end
+
 -- Anti-Detection: Wait for game load
 repeat task.wait() until game:IsLoaded()
 
