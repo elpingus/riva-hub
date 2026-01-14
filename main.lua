@@ -22,15 +22,7 @@ end
 
 print("[Riva Hub] Authentication verified! Loading script...")
 
--- Auto-Rejoin: Queue script to run after teleport
-if queue_on_teleport then
-    -- Save settings before teleporting
-    if SaveSettings then SaveSettings() end
-    
-    queue_on_teleport([[
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
-    ]])
-end
+
 
 -- Anti-Detection: Wait for game load
 repeat task.wait() until game:IsLoaded()
@@ -1815,3 +1807,32 @@ Library:Notification("Riva Hub", "Script loaded successfully!", 5)
 print("[Riva Hub] Loaded successfully!")
 print("[Riva Hub] Executor: " .. ExecutorName)
 print("[Riva Hub] Low Performance Mode: " .. tostring(LowPerformanceMode))
+
+-- ═══════════════════════════════════════════════════════════════════
+-- AUTO-REJOIN & PERSISTENCE
+-- ═══════════════════════════════════════════════════════════════════
+
+-- Force save on teleport start (Ensures latest settings are saved)
+if Players.LocalPlayer.OnTeleport then
+    Players.LocalPlayer.OnTeleport:Connect(function(State)
+        -- Some executors pass state, some don't. Just save.
+        if SaveSettings then
+            SaveSettings()
+            print("[Riva Hub] Teleport detected! Settings saved.")
+        end
+    end)
+end
+
+-- Queue script for next server
+if queue_on_teleport then
+    queue_on_teleport([[
+        -- Preserve auth
+        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
+        
+        -- Add small delay to let game load
+        task.wait(2)
+        
+        -- Load script
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
+    ]])
+end
