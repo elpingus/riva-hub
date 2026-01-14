@@ -954,34 +954,62 @@ RunService.RenderStepped:Connect(function()
         UpdateChams(player)
     end
     
-    -- Aimbot: Toggle ON + Keybind Active (Hold/Toggle/Always mode handled by Library)
+    -- ═══════════════════════════════════════════════════════════════════
+    -- AIMBOT SYSTEM (Camera Lock - Only when firing)
+    -- ═══════════════════════════════════════════════════════════════════
     local aimbotActive = Settings.Aimbot.Enabled and IsKeybindActive("AimbotKeybind")
-    if aimbotActive then
+    
+    -- Only aim when left mouse button is held (firing)
+    local isFiring = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+    local isScoping = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    
+    -- Don't interfere with scoping
+    if aimbotActive and isFiring and not isScoping then
         local target = GetClosestPlayer()
         if target and target.Character then
             local targetPart = target.Character:FindFirstChild(Settings.Aimbot.TargetPart) or target.Character:FindFirstChild("Head")
             if targetPart then
                 local targetPos = targetPart.Position
                 
-                -- Prediction
+                -- Prediction (velocity-based)
                 if Settings.Aimbot.PredictionEnabled then
                     local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp then
+                    if hrp and hrp.AssemblyLinearVelocity then
                         targetPos = targetPos + (hrp.AssemblyLinearVelocity * Settings.Aimbot.PredictionAmount)
                     end
                 end
                 
-                local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-                Camera.CFrame = Camera.CFrame:Lerp(newCFrame, Settings.Aimbot.Smoothness)
+                -- Smooth aiming with proper interpolation
+                local currentLookVector = Camera.CFrame.LookVector
+                local targetLookVector = (targetPos - Camera.CFrame.Position).Unit
+                
+                -- Calculate angle difference
+                local angleDiff = math.acos(math.clamp(currentLookVector:Dot(targetLookVector), -1, 1))
+                
+                -- Only apply smoothing if there's significant difference
+                if angleDiff > 0.001 then
+                    local smoothFactor = math.clamp(Settings.Aimbot.Smoothness, 0.01, 1)
+                    local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
+                    Camera.CFrame = Camera.CFrame:Lerp(newCFrame, smoothFactor)
+                end
             end
         end
     end
     
-    -- Silent Aim: Toggle ON + Keybind Active
+    -- ═══════════════════════════════════════════════════════════════════
+    -- SILENT AIM SYSTEM (NO Camera Movement - Just redirects bullets)
+    -- ═══════════════════════════════════════════════════════════════════
+    -- Silent Aim works INDEPENDENTLY from Aimbot
+    -- It hooks raycasts and mouse properties to redirect shots to target
+    -- WITHOUT moving your camera at all - completely invisible to player
+    
     local silentAimActive = Settings.SilentAim.Enabled and IsKeybindActive("SilentAimKeybind")
     if silentAimActive then
+        -- Find closest target within Silent Aim FOV
         local _, targetPart = GetClosestPlayerForSilentAim()
         SilentAimTarget = targetPart
+        -- The hooks in lines 198-267 will automatically redirect shots to SilentAimTarget
+        -- Your camera stays where YOU aim it, but bullets go to the target
     else
         SilentAimTarget = nil
     end
