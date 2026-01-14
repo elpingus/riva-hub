@@ -65,8 +65,6 @@ local Settings = {
         WallCheck = true,
         ShowFOV = false,
         FOVColor = Color3.fromRGB(255, 255, 255),
-        PredictionEnabled = false,
-        PredictionAmount = 0.165,
     },
     SilentAim = {
         Enabled = false,
@@ -77,16 +75,21 @@ local Settings = {
         HitChance = 100,
         ShowFOV = false,
         FOVColor = Color3.fromRGB(255, 0, 0),
-        Method = "Raycast", -- Raycast, Mouse.Hit, Camera
     },
     Triggerbot = {
         Enabled = false,
-        Delay = 0.1,
+        Delay = 0.05,
         TeamCheck = true,
     },
     NoRecoil = {
         Enabled = false,
-        Strength = 100, -- Percentage of recoil to remove
+    },
+    RageBot = {
+        Enabled = false,
+        TargetPart = "Head",
+        AutoFire = true,
+        TeamCheck = true,
+        -- WARNING: High detection risk!
     },
     
     -- Visuals
