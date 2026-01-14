@@ -2,27 +2,17 @@
     RIVA HUB - RIVALS SCRIPT
     Full ESP, Aimbot, Visuals
     Developer: elpingus
-    
-    DO NOT EXECUTE DIRECTLY - Use key-system.lua loader!
 ]]
 
--- Auth Verification
-if not getgenv().RivaHubAuth or not getgenv().RivaHubAuth.Verified then
-    warn("[Riva Hub] Unauthorized access! Please use the key system loader.")
-    return
+-- Auto-Rejoin: Queue script to run after teleport
+if queue_on_teleport then
+    -- Save settings before teleporting
+    if SaveSettings then SaveSettings() end
+    
+    queue_on_teleport([[
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
+    ]])
 end
-
--- Verify time token (valid for 5 minutes)
-local authTime = getgenv().RivaHubAuth.Time or 0
-if os.time() - authTime > 300 then
-    warn("[Riva Hub] Auth token expired! Please reload via key system.")
-    getgenv().RivaHubAuth = nil
-    return
-end
-
-print("[Riva Hub] Authentication verified! Loading script...")
-
-
 
 -- Anti-Detection: Wait for game load
 repeat task.wait() until game:IsLoaded()
@@ -1807,32 +1797,3 @@ Library:Notification("Riva Hub", "Script loaded successfully!", 5)
 print("[Riva Hub] Loaded successfully!")
 print("[Riva Hub] Executor: " .. ExecutorName)
 print("[Riva Hub] Low Performance Mode: " .. tostring(LowPerformanceMode))
-
--- ═══════════════════════════════════════════════════════════════════
--- AUTO-REJOIN & PERSISTENCE
--- ═══════════════════════════════════════════════════════════════════
-
--- Force save on teleport start (Ensures latest settings are saved)
-if Players.LocalPlayer.OnTeleport then
-    Players.LocalPlayer.OnTeleport:Connect(function(State)
-        -- Some executors pass state, some don't. Just save.
-        if SaveSettings then
-            SaveSettings()
-            print("[Riva Hub] Teleport detected! Settings saved.")
-        end
-    end)
-end
-
--- Queue script for next server
-if queue_on_teleport then
-    queue_on_teleport([[
-        -- Preserve auth
-        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
-        
-        -- Add small delay to let game load
-        task.wait(2)
-        
-        -- Load script
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
-    ]])
-end
