@@ -1,19 +1,14 @@
 --[[
-    RIVA HUB - RIVALS SCRIPT (MAIN)
+    RIVA HUB - RIVALS SCRIPT
+    Full ESP, Aimbot, Visuals
     Developer: elpingus
     
-    WARNING: This script is protected. Do not execute directly.
-    Use the Key System Loader: key-system.lua
+    DO NOT EXECUTE DIRECTLY - Use key-system.lua loader!
 ]]
-
--- Anti-Detection: Wait for game load
-repeat task.wait() until game:IsLoaded()
 
 -- Auth Verification
 if not getgenv().RivaHubAuth or not getgenv().RivaHubAuth.Verified then
     warn("[Riva Hub] Unauthorized access! Please use the key system loader.")
-    -- For testing purposes, you can uncomment the line below:
-    -- getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
     return
 end
 
@@ -29,6 +24,7 @@ print("[Riva Hub] Authentication verified! Loading script...")
 
 -- Auto-Rejoin: Queue script to run after teleport
 if queue_on_teleport then
+    -- Preserve auth for next server
     local teleportScript = [[
         getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
         loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua?nocache=" .. os.time()))()
@@ -36,11 +32,6 @@ if queue_on_teleport then
     queue_on_teleport(teleportScript)
     print("[Riva Hub] Auto-rejoin enabled! Script will re-inject after teleport.")
 end
---[[
-    RIVA HUB - RIVALS SCRIPT
-    Full ESP, Aimbot, Visuals
-    Developer: elpingus
-]]
 
 -- Anti-Detection: Wait for game load
 repeat task.wait() until game:IsLoaded()
@@ -103,6 +94,8 @@ local Settings = {
         WallCheck = true,
         ShowFOV = false,
         FOVColor = Color3.fromRGB(255, 255, 255),
+        PredictionEnabled = false,
+        PredictionAmount = 0.165,
     },
     SilentAim = {
         Enabled = false,
@@ -113,21 +106,16 @@ local Settings = {
         HitChance = 100,
         ShowFOV = false,
         FOVColor = Color3.fromRGB(255, 0, 0),
+        Method = "Raycast", -- Raycast, Mouse.Hit, Camera
     },
     Triggerbot = {
         Enabled = false,
-        Delay = 0.05,
+        Delay = 0.1,
         TeamCheck = true,
     },
     NoRecoil = {
         Enabled = false,
-    },
-    RageBot = {
-        Enabled = false,
-        TargetPart = "Head",
-        AutoFire = true,
-        TeamCheck = true,
-        -- WARNING: High detection risk!
+        Strength = 100, -- Percentage of recoil to remove
     },
     
     -- Visuals
@@ -214,17 +202,17 @@ if MouseMT and setreadonly then
     
     OldIndex = MouseMT.__index
     MouseMT.__index = newcclosure(function(self, key)
-        if self == Mouse and SilentAimTarget and (Settings.SilentAim.Enabled or Settings.RageBot.Enabled) then
+        if self == Mouse and SilentAimTarget and Settings.SilentAim.Enabled then
             if key == "Hit" then
-                if PassesHitChance() or Settings.RageBot.Enabled then
+                if PassesHitChance() then
                     return CFrame.new(SilentAimTarget.Position)
                 end
             elseif key == "Target" then
-                if PassesHitChance() or Settings.RageBot.Enabled then
+                if PassesHitChance() then
                     return SilentAimTarget
                 end
             elseif key == "X" or key == "Y" then
-                if PassesHitChance() or Settings.RageBot.Enabled then
+                if PassesHitChance() then
                     local screenPos = WorldToScreen(SilentAimTarget.Position)
                     if key == "X" then
                         return screenPos.X
@@ -233,7 +221,7 @@ if MouseMT and setreadonly then
                     end
                 end
             elseif key == "UnitRay" then
-                if PassesHitChance() or Settings.RageBot.Enabled then
+                if PassesHitChance() then
                     local origin = Camera.CFrame.Position
                     local direction = (SilentAimTarget.Position - origin).Unit
                     return Ray.new(origin, direction)
@@ -252,15 +240,12 @@ if hookfunction and getnamecallmethod then
         local method = getnamecallmethod()
         local args = {...}
         
-        if SilentAimTarget and (Settings.SilentAim.Enabled or Settings.RageBot.Enabled) and (PassesHitChance() or Settings.RageBot.Enabled) then
+        if SilentAimTarget and Settings.SilentAim.Enabled and PassesHitChance() then
             -- Hook Workspace:Raycast
             if method == "Raycast" and self == Workspace then
                 local origin = args[1]
                 if typeof(origin) == "Vector3" then
-                    -- For Rage Bot or Silent Aim, redirect the ray to the target
                     local newDirection = (SilentAimTarget.Position - origin)
-                    -- Rage Bot: Extend ray heavily if needed, but usually just redirecting direction is enough
-                    -- if Settings.RageBot.Enabled then newDirection = newDirection.Unit * 1000 end
                     args[2] = newDirection
                     return OldNamecall(self, args[1], args[2], args[3])
                 end
@@ -292,6 +277,7 @@ local function IsAlive(player)
 end
 
 local function IsTeammate(player)
+    if not Settings.ESP.TeamCheck then return false end
     if not player.Team or not LocalPlayer.Team then return false end
     return player.Team == LocalPlayer.Team
 end
@@ -318,6 +304,7 @@ end
 local function GetClosestPlayer()
     local closestPlayer = nil
     local shortestDistance = Settings.Aimbot.FOV
+    -- Use mouse position instead of screen center (matches FOV circle)
     local mousePos = UserInputService:GetMouseLocation()
     
     for _, player in ipairs(Players:GetPlayers()) do
@@ -334,35 +321,6 @@ local function GetClosestPlayer()
             local distance = (screenPos - mousePos).Magnitude
             if distance < shortestDistance then
                 if Settings.Aimbot.WallCheck and not IsVisible(targetPart) then continue end
-                shortestDistance = distance
-                closestPlayer = player
-            end
-        end
-    end
-    
-    return closestPlayer
-end
-
--- RAGE BOT LOGIC (360 degrees, ignores walls if needed)
-local function GetClosestPlayerForRage()
-    local closestPlayer = nil
-    local shortestDistance = math.huge -- Infinite range/FOV
-    local myPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
-    if not myPos then return nil end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and IsAlive(player) then
-            if Settings.RageBot.TeamCheck and IsTeammate(player) then continue end
-            
-            local character = player.Character
-            local targetPart = character:FindFirstChild(Settings.RageBot.TargetPart) or character:FindFirstChild("Head")
-            if not targetPart then continue end
-            
-            local distance = (targetPart.Position - myPos).Magnitude
-            if distance < shortestDistance then
-                -- Rage Bot usually ignores Wall Check or has an option for it. 
-                -- Assuming checking visibility isn't strictly required for Rage unless specified usually.
-                -- User said "arkam dönük olsa da sıkabileyiim" -> 360 no scope.
                 shortestDistance = distance
                 closestPlayer = player
             end
@@ -1039,88 +997,66 @@ RunService.RenderStepped:Connect(function()
     end
     
     -- ═══════════════════════════════════════════════════════════════════
-    -- RAGE BOT SYSTEM (360° Auto-fire)
+    -- SILENT AIM SYSTEM (NO Camera Movement - Just redirects bullets)
     -- ═══════════════════════════════════════════════════════════════════
-    local rageBotActive = Settings.RageBot.Enabled and IsKeybindActive("RageBotKeybind")
-    if rageBotActive then
-        local target = GetClosestPlayerForRage()
-        SilentAimTarget = target and (target.Character:FindFirstChild(Settings.RageBot.TargetPart) or target.Character:FindFirstChild("Head"))
-        
-        if SilentAimTarget and Settings.RageBot.AutoFire then
-             -- Auto-fire at maximum speed
-            mouse1click()
-        end
+    -- Silent Aim works INDEPENDENTLY from Aimbot
+    -- It hooks raycasts and mouse properties to redirect shots to target
+    -- WITHOUT moving your camera at all - completely invisible to player
+    
+    local silentAimActive = Settings.SilentAim.Enabled and IsKeybindActive("SilentAimKeybind")
+    if silentAimActive then
+        -- Find closest target within Silent Aim FOV
+        local _, targetPart = GetClosestPlayerForSilentAim()
+        SilentAimTarget = targetPart
+        -- The hooks in lines 198-267 will automatically redirect shots to SilentAimTarget
+        -- Your camera stays where YOU aim it, but bullets go to the target
     else
-        -- ═══════════════════════════════════════════════════════════════════
-        -- SILENT AIM SYSTEM
-        -- ═══════════════════════════════════════════════════════════════════
-        local silentAimActive = Settings.SilentAim.Enabled and IsKeybindActive("SilentAimKeybind")
-        if silentAimActive then
-            local _, targetPart = GetClosestPlayerForSilentAim()
-            SilentAimTarget = targetPart
-        else
-            SilentAimTarget = nil
-        end
+        SilentAimTarget = nil
     end
     
-    -- ═══════════════════════════════════════════════════════════════════
-    -- TRIGGERBOT SYSTEM (Strict Crosshair Check)
-    -- ═══════════════════════════════════════════════════════════════════
+    -- Triggerbot: Auto-fire when target is in crosshair
     local triggerbotActive = Settings.Triggerbot.Enabled and IsKeybindActive("TriggerbotKeybind")
     if triggerbotActive then
-        local mouseTarget = Mouse.Target
-        if mouseTarget and mouseTarget:IsDescendantOf(Workspace) then
-            local character = mouseTarget.Parent
-            if character and character:FindFirstChild("Humanoid") then
-                local player = Players:GetPlayerFromCharacter(character)
-                if player and player ~= LocalPlayer then
-                    if not (Settings.Triggerbot.TeamCheck and IsTeammate(player)) then
-                        task.wait(Settings.Triggerbot.Delay)
-                        mouse1click()
+        local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and IsAlive(player) then
+                if Settings.Triggerbot.TeamCheck and IsTeammate(player) then continue end
+                
+                local character = player.Character
+                local head = character:FindFirstChild("Head")
+                if head then
+                    local screenPos, onScreen = WorldToScreen(head.Position)
+                    if onScreen then
+                        local distance = (screenPos - screenCenter).Magnitude
+                        if distance < 50 then -- Within crosshair area
+                            task.wait(Settings.Triggerbot.Delay)
+                            mouse1click()
+                            break
+                        end
                     end
                 end
             end
         end
     end
     
-    -- ═══════════════════════════════════════════════════════════════════
-    -- NO RECOIL SYSTEM (Perfect Stability)
-    -- ═══════════════════════════════════════════════════════════════════
-    -- ═══════════════════════════════════════════════════════════════════
-    -- NO RECOIL SYSTEM (Perfect Stability)
-    -- ═══════════════════════════════════════════════════════════════════
+    -- No Recoil: Compensate camera kick
     local noRecoilActive = Settings.NoRecoil.Enabled and IsKeybindActive("NoRecoilKeybind")
     if noRecoilActive then
+        -- Store camera orientation to restore after recoil
         local currentCFrame = Camera.CFrame
-        -- Apply anti-recoil by dampening vertical camera movement at end of frame
+        local strength = Settings.NoRecoil.Strength / 100
+        
+        -- Apply anti-recoil by dampening vertical camera movement
         task.defer(function()
-            if not (Settings.NoRecoil.Enabled and IsKeybindActive("NoRecoilKeybind")) then return end
-            
-            -- Only active when firing
-            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-                local newCFrame = Camera.CFrame
-                local diff = newCFrame.LookVector.Y - currentCFrame.LookVector.Y
-                
-                -- If camera pitched up significantly (recoil kick)
-                if diff > 0.005 then 
-                    -- Stabilize Pitch (Restore previous pitch relative to new position)
-                    local oldX, _, _ = currentCFrame:ToOrientation()
-                    local _, newY, newZ = newCFrame:ToOrientation()
-                    -- Keep new Yaw (mouse horizontal movement) but clamp Pitch
-                    Camera.CFrame = CFrame.new(newCFrame.Position) * CFrame.fromOrientation(oldX, newY, newZ)
+            local newCFrame = Camera.CFrame
+            local deltaY = newCFrame.LookVector.Y - currentCFrame.LookVector.Y
+            if deltaY > 0.001 then -- Upward kick detected (recoil)
+                local compensation = CFrame.Angles(-deltaY * strength, 0, 0)
+                Camera.CFrame = Camera.CFrame * compensation
+            end
+        end)
     end
 end)
-end)
-
--- Auto Config Load (Load 'default' config on startup)
-if Library and Library.Config then
-    -- Check if default config exists (Library usually handles file checks internally or safely)
-    -- pcall just in case
-    pcall(function()
-        Library:LoadConfig("default")
-        print("[Riva Hub] Auto-loaded default config!")
-    end)
-end
 
 -- Input Handler (only for features not managed by Library)
 UserInputService.InputBegan:Connect(function(input, processed)
@@ -1296,7 +1232,32 @@ AimbotSection:Toggle({
     end
 })
 
--- Triggerbot Section (Fire only when crosshair on enemy)
+-- Prediction Section
+local PredictionSection = AimbotSubPage:Section({Name = "Prediction", Side = 2})
+
+PredictionSection:Toggle({
+    Name = "Enable Prediction",
+    Flag = "PredictionEnabled",
+    Default = false,
+    Callback = function(value)
+        Settings.Aimbot.PredictionEnabled = value
+    end
+})
+
+PredictionSection:Slider({
+    Name = "Prediction Amount",
+    Flag = "PredictionAmount",
+    Min = 0.01,
+    Max = 0.5,
+    Default = 0.165,
+    Decimals = 0.001,
+    Suffix = "s",
+    Callback = function(value)
+        Settings.Aimbot.PredictionAmount = value
+    end
+})
+
+-- Triggerbot Section
 local TriggerbotSection = AimbotSubPage:Section({Name = "Triggerbot", Side = 2})
 
 TriggerbotSection:Toggle({
@@ -1316,8 +1277,8 @@ TriggerbotSection:Slider({
     Name = "Delay",
     Flag = "TriggerbotDelay",
     Min = 0,
-    Max = 0.5,
-    Default = 0.05,
+    Max = 1,
+    Default = 0.1,
     Decimals = 0.01,
     Suffix = "s",
     Callback = function(value)
@@ -1325,20 +1286,11 @@ TriggerbotSection:Slider({
     end
 })
 
-TriggerbotSection:Toggle({
-    Name = "Team Check",
-    Flag = "TriggerbotTeamCheck",
-    Default = true,
-    Callback = function(value)
-        Settings.Triggerbot.TeamCheck = value
-    end
-})
-
--- No Recoil Section (Simple toggle)
+-- No Recoil Section
 local NoRecoilSection = AimbotSubPage:Section({Name = "No Recoil", Side = 2})
 
 NoRecoilSection:Toggle({
-    Name = "Enabled (No Recoil)",
+    Name = "Enabled",
     Flag = "NoRecoilEnabled",
     Default = false,
     Callback = function(value)
@@ -1350,60 +1302,16 @@ NoRecoilSection:Toggle({
     Mode = "Toggle"
 })
 
--- ═══════════════════════════════════════════════════════════════════
--- RAGE BOT SUBPAGE (USE AT OWN RISK!)
--- ═══════════════════════════════════════════════════════════════════
-local RageBotSubPage = CombatPage:SubPage({
-    Name = "Rage Bot",
-    Columns = 2
-})
-
-local RageWarningSection = RageBotSubPage:Section({Name = "WARNING", Side = 1})
-
-RageWarningSection:Label("USE AT YOUR OWN RISK!")
-RageWarningSection:Label("Rage Bot is HIGHLY detectable.")
-RageWarningSection:Label("You may get banned instantly.")
-
-local RageBotSection = RageBotSubPage:Section({Name = "Rage Bot Settings", Side = 1})
-
-RageBotSection:Toggle({
-    Name = "Enable Rage Bot",
-    Flag = "RageBotEnabled",
-    Default = false,
+NoRecoilSection:Slider({
+    Name = "Strength",
+    Flag = "NoRecoilStrength",
+    Min = 0,
+    Max = 100,
+    Default = 100,
+    Decimals = 1,
+    Suffix = "%",
     Callback = function(value)
-        Settings.RageBot.Enabled = value
-    end
-}):Keybind({
-    Flag = "RageBotKeybind",
-    Default = Enum.KeyCode.Z,
-    Mode = "Hold"
-})
-
-RageBotSection:Toggle({
-    Name = "Auto Fire",
-    Flag = "RageBotAutoFire",
-    Default = true,
-    Callback = function(value)
-        Settings.RageBot.AutoFire = value
-    end
-})
-
-RageBotSection:Dropdown({
-    Name = "Target Part",
-    Flag = "RageBotTargetPart",
-    Items = {"Head", "HumanoidRootPart", "UpperTorso"},
-    Default = "Head",
-    Callback = function(value)
-        Settings.RageBot.TargetPart = value
-    end
-})
-
-RageBotSection:Toggle({
-    Name = "Team Check",
-    Flag = "RageBotTeamCheck",
-    Default = true,
-    Callback = function(value)
-        Settings.RageBot.TeamCheck = value
+        Settings.NoRecoil.Strength = value
     end
 })
 
