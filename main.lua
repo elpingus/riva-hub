@@ -982,11 +982,11 @@ RunService.RenderStepped:Connect(function()
     local aimbotActive = Settings.Aimbot.Enabled and IsKeybindActive("AimbotKeybind")
     
     -- Only aim when left mouse button is held (firing)
-    local isFiring = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+    -- local isFiring = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) -- Removed per user request
     local isScoping = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
     
-    -- Don't interfere with scoping
-    if aimbotActive and isFiring and not isScoping then
+    -- Don't interfere with scoping (unless user binds aimbot to right click, which would be blocked here)
+    if aimbotActive and not isScoping then
         local target = GetClosestPlayer()
         if target and target.Character then
             local targetPart = target.Character:FindFirstChild(Settings.Aimbot.TargetPart) or target.Character:FindFirstChild("Head")
