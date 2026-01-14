@@ -2,16 +2,35 @@
     RIVA HUB - RIVALS SCRIPT
     Full ESP, Aimbot, Visuals
     Developer: elpingus
+    
+    DO NOT EXECUTE DIRECTLY - Use key-system.lua loader!
 ]]
+
+-- Auth Verification
+if not getgenv().RivaHubAuth or not getgenv().RivaHubAuth.Verified then
+    warn("[Riva Hub] Unauthorized access! Please use the key system loader.")
+    return
+end
+
+-- Verify time token (valid for 5 minutes)
+local authTime = getgenv().RivaHubAuth.Time or 0
+if os.time() - authTime > 300 then
+    warn("[Riva Hub] Auth token expired! Please reload via key system.")
+    getgenv().RivaHubAuth = nil
+    return
+end
+
+print("[Riva Hub] Authentication verified! Loading script...")
 
 -- Auto-Rejoin: Queue script to run after teleport
 if queue_on_teleport then
-    -- Save settings before teleporting
-    if SaveSettings then SaveSettings() end
-    
-    queue_on_teleport([[
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
-    ]])
+    -- Preserve auth for next server
+    local teleportScript = [[
+        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua?nocache=" .. os.time()))()
+    ]]
+    queue_on_teleport(teleportScript)
+    print("[Riva Hub] Auto-rejoin enabled! Script will re-inject after teleport.")
 end
 
 -- Anti-Detection: Wait for game load
@@ -148,47 +167,6 @@ local Settings = {
         InfiniteJump = false,
     },
 }
-
--- Config System
-local ConfigFile = "rivahub_autosave.json"
-
-local function SaveSettings()
-    local json = HttpService:JSONEncode(Settings)
-    writefile(ConfigFile, json)
-end
-
-local function LoadSettings()
-    if isfile(ConfigFile) then
-        local success, result = pcall(function()
-            return HttpService:JSONDecode(readfile(ConfigFile))
-        end)
-        if success and type(result) == "table" then
-            -- Recursively merge settings to ensure new keys are kept
-            local function MergeTables(dst, src)
-                for k, v in pairs(src) do
-                    if type(v) == "table" and type(dst[k]) == "table" then
-                        MergeTables(dst[k], v)
-                    else
-                        dst[k] = v
-                    end
-                end
-            end
-            MergeTables(Settings, result)
-            print("[Riva Hub] Settings loaded from autosave!")
-        end
-    end
-end
-
--- Load settings on startup
-LoadSettings()
-
--- Auto-Save Loop (every 30 seconds)
-task.spawn(function()
-    while true do
-        task.wait(30)
-        SaveSettings()
-    end
-end)
 
 -- ESP Storage
 local ESPObjects = {}
@@ -976,62 +954,34 @@ RunService.RenderStepped:Connect(function()
         UpdateChams(player)
     end
     
-    -- ═══════════════════════════════════════════════════════════════════
-    -- AIMBOT SYSTEM (Camera Lock - Only when firing)
-    -- ═══════════════════════════════════════════════════════════════════
+    -- Aimbot: Toggle ON + Keybind Active (Hold/Toggle/Always mode handled by Library)
     local aimbotActive = Settings.Aimbot.Enabled and IsKeybindActive("AimbotKeybind")
-    
-    -- Only aim when left mouse button is held (firing)
-    -- local isFiring = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) -- Removed per user request
-    local isScoping = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-    
-    -- Don't interfere with scoping (unless user binds aimbot to right click, which would be blocked here)
-    if aimbotActive and not isScoping then
+    if aimbotActive then
         local target = GetClosestPlayer()
         if target and target.Character then
             local targetPart = target.Character:FindFirstChild(Settings.Aimbot.TargetPart) or target.Character:FindFirstChild("Head")
             if targetPart then
                 local targetPos = targetPart.Position
                 
-                -- Prediction (velocity-based)
+                -- Prediction
                 if Settings.Aimbot.PredictionEnabled then
                     local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp and hrp.AssemblyLinearVelocity then
+                    if hrp then
                         targetPos = targetPos + (hrp.AssemblyLinearVelocity * Settings.Aimbot.PredictionAmount)
                     end
                 end
                 
-                -- Smooth aiming with proper interpolation
-                local currentLookVector = Camera.CFrame.LookVector
-                local targetLookVector = (targetPos - Camera.CFrame.Position).Unit
-                
-                -- Calculate angle difference
-                local angleDiff = math.acos(math.clamp(currentLookVector:Dot(targetLookVector), -1, 1))
-                
-                -- Only apply smoothing if there's significant difference
-                if angleDiff > 0.001 then
-                    local smoothFactor = math.clamp(Settings.Aimbot.Smoothness, 0.01, 1)
-                    local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-                    Camera.CFrame = Camera.CFrame:Lerp(newCFrame, smoothFactor)
-                end
+                local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
+                Camera.CFrame = Camera.CFrame:Lerp(newCFrame, Settings.Aimbot.Smoothness)
             end
         end
     end
     
-    -- ═══════════════════════════════════════════════════════════════════
-    -- SILENT AIM SYSTEM (NO Camera Movement - Just redirects bullets)
-    -- ═══════════════════════════════════════════════════════════════════
-    -- Silent Aim works INDEPENDENTLY from Aimbot
-    -- It hooks raycasts and mouse properties to redirect shots to target
-    -- WITHOUT moving your camera at all - completely invisible to player
-    
+    -- Silent Aim: Toggle ON + Keybind Active
     local silentAimActive = Settings.SilentAim.Enabled and IsKeybindActive("SilentAimKeybind")
     if silentAimActive then
-        -- Find closest target within Silent Aim FOV
         local _, targetPart = GetClosestPlayerForSilentAim()
         SilentAimTarget = targetPart
-        -- The hooks will automatically redirect shots to SilentAimTarget
-        -- Your camera stays where YOU aim it, but bullets go to the target
     else
         SilentAimTarget = nil
     end
