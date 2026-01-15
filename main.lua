@@ -2,35 +2,16 @@
     RIVA HUB - RIVALS SCRIPT
     Full ESP, Aimbot, Visuals
     Developer: elpingus
-    
-    DO NOT EXECUTE DIRECTLY - Use key-system.lua loader!
 ]]
-
--- Auth Verification
-if not getgenv().RivaHubAuth or not getgenv().RivaHubAuth.Verified then
-    warn("[Riva Hub] Unauthorized access! Please use the key system loader.")
-    return
-end
-
--- Verify time token (valid for 5 minutes)
-local authTime = getgenv().RivaHubAuth.Time or 0
-if os.time() - authTime > 300 then
-    warn("[Riva Hub] Auth token expired! Please reload via key system.")
-    getgenv().RivaHubAuth = nil
-    return
-end
-
-print("[Riva Hub] Authentication verified! Loading script...")
 
 -- Auto-Rejoin: Queue script to run after teleport
 if queue_on_teleport then
-    -- Preserve auth for next server
-    local teleportScript = [[
-        getgenv().RivaHubAuth = {Verified = true, Time = os.time()}
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua?nocache=" .. os.time()))()
-    ]]
-    queue_on_teleport(teleportScript)
-    print("[Riva Hub] Auto-rejoin enabled! Script will re-inject after teleport.")
+    -- Save settings before teleporting
+    if SaveSettings then SaveSettings() end
+    
+    queue_on_teleport([[
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/elpingus/riva-hub/refs/heads/main/main.lua"))()
+    ]])
 end
 
 -- Anti-Detection: Wait for game load
@@ -117,6 +98,19 @@ local Settings = {
         Enabled = false,
         Strength = 100, -- Percentage of recoil to remove
     },
+    Ragebot = {
+        Enabled = false,
+        FireRate = 0.1, -- Seconds between shots
+        TargetPart = "Head",
+        TeamCheck = true,
+        FOV = 200,
+    },
+    NoSpread = {
+        Enabled = false,
+    },
+    AutoReload = {
+        Enabled = false,
+    },
     
     -- Visuals
     ESP = {
@@ -166,7 +160,52 @@ local Settings = {
         JumpPower = 50,
         InfiniteJump = false,
     },
+    ThirdPerson = {
+        Enabled = false,
+        Distance = 10,
+    },
 }
+
+-- Config System
+local ConfigFile = "rivahub_autosave.json"
+
+local function SaveSettings()
+    local json = HttpService:JSONEncode(Settings)
+    writefile(ConfigFile, json)
+end
+
+local function LoadSettings()
+    if isfile(ConfigFile) then
+        local success, result = pcall(function()
+            return HttpService:JSONDecode(readfile(ConfigFile))
+        end)
+        if success and type(result) == "table" then
+            -- Recursively merge settings to ensure new keys are kept
+            local function MergeTables(dst, src)
+                for k, v in pairs(src) do
+                    if type(v) == "table" and type(dst[k]) == "table" then
+                        MergeTables(dst[k], v)
+                    else
+                        dst[k] = v
+                    end
+                end
+            end
+            MergeTables(Settings, result)
+            print("[Riva Hub] Settings loaded from autosave!")
+        end
+    end
+end
+
+-- Load settings on startup
+LoadSettings()
+
+-- Auto-Save Loop (every 30 seconds)
+task.spawn(function()
+    while true do
+        task.wait(30)
+        SaveSettings()
+    end
+end)
 
 -- ESP Storage
 local ESPObjects = {}
@@ -954,34 +993,62 @@ RunService.RenderStepped:Connect(function()
         UpdateChams(player)
     end
     
-    -- Aimbot: Toggle ON + Keybind Active (Hold/Toggle/Always mode handled by Library)
+    -- ═══════════════════════════════════════════════════════════════════
+    -- AIMBOT SYSTEM (Camera Lock - Only when firing)
+    -- ═══════════════════════════════════════════════════════════════════
     local aimbotActive = Settings.Aimbot.Enabled and IsKeybindActive("AimbotKeybind")
-    if aimbotActive then
+    
+    -- Only aim when left mouse button is held (firing)
+    -- local isFiring = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) -- Removed per user request
+    local isScoping = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    
+    -- Don't interfere with scoping (unless user binds aimbot to right click, which would be blocked here)
+    if aimbotActive and not isScoping then
         local target = GetClosestPlayer()
         if target and target.Character then
             local targetPart = target.Character:FindFirstChild(Settings.Aimbot.TargetPart) or target.Character:FindFirstChild("Head")
             if targetPart then
                 local targetPos = targetPart.Position
                 
-                -- Prediction
+                -- Prediction (velocity-based)
                 if Settings.Aimbot.PredictionEnabled then
                     local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp then
+                    if hrp and hrp.AssemblyLinearVelocity then
                         targetPos = targetPos + (hrp.AssemblyLinearVelocity * Settings.Aimbot.PredictionAmount)
                     end
                 end
                 
-                local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-                Camera.CFrame = Camera.CFrame:Lerp(newCFrame, Settings.Aimbot.Smoothness)
+                -- Smooth aiming with proper interpolation
+                local currentLookVector = Camera.CFrame.LookVector
+                local targetLookVector = (targetPos - Camera.CFrame.Position).Unit
+                
+                -- Calculate angle difference
+                local angleDiff = math.acos(math.clamp(currentLookVector:Dot(targetLookVector), -1, 1))
+                
+                -- Only apply smoothing if there's significant difference
+                if angleDiff > 0.001 then
+                    local smoothFactor = math.clamp(Settings.Aimbot.Smoothness, 0.01, 1)
+                    local newCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
+                    Camera.CFrame = Camera.CFrame:Lerp(newCFrame, smoothFactor)
+                end
             end
         end
     end
     
-    -- Silent Aim: Toggle ON + Keybind Active
+    -- ═══════════════════════════════════════════════════════════════════
+    -- SILENT AIM SYSTEM (NO Camera Movement - Just redirects bullets)
+    -- ═══════════════════════════════════════════════════════════════════
+    -- Silent Aim works INDEPENDENTLY from Aimbot
+    -- It hooks raycasts and mouse properties to redirect shots to target
+    -- WITHOUT moving your camera at all - completely invisible to player
+    
     local silentAimActive = Settings.SilentAim.Enabled and IsKeybindActive("SilentAimKeybind")
     if silentAimActive then
+        -- Find closest target within Silent Aim FOV
         local _, targetPart = GetClosestPlayerForSilentAim()
         SilentAimTarget = targetPart
+        -- The hooks will automatically redirect shots to SilentAimTarget
+        -- Your camera stays where YOU aim it, but bullets go to the target
     else
         SilentAimTarget = nil
     end
@@ -1027,6 +1094,71 @@ RunService.RenderStepped:Connect(function()
                 Camera.CFrame = Camera.CFrame * compensation
             end
         end)
+    end
+    
+    -- ═══════════════════════════════════════════════════════════════════
+    -- RAGEBOT SYSTEM (Auto Shoot + Silent Aim Combined)
+    -- ═══════════════════════════════════════════════════════════════════
+    local ragebotActive = Settings.Ragebot.Enabled and IsKeybindActive("RagebotKeybind")
+    if ragebotActive then
+        local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        local closestPlayer = nil
+        local closestPart = nil
+        local shortestDistance = Settings.Ragebot.FOV
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and IsAlive(player) then
+                if Settings.Ragebot.TeamCheck and IsTeammate(player) then continue end
+                
+                local character = player.Character
+                local targetPart = character:FindFirstChild(Settings.Ragebot.TargetPart) or character:FindFirstChild("Head")
+                if targetPart then
+                    local screenPos, onScreen = WorldToScreen(targetPart.Position)
+                    if onScreen then
+                        local distance = (screenPos - screenCenter).Magnitude
+                        if distance < shortestDistance then
+                            shortestDistance = distance
+                            closestPlayer = player
+                            closestPart = targetPart
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- If target found, set SilentAimTarget and auto-fire
+        if closestPart then
+            SilentAimTarget = closestPart -- This makes Silent Aim hooks redirect bullets
+            
+            -- Check fire rate cooldown
+            if not getgenv().RagebotLastFire or (tick() - getgenv().RagebotLastFire) >= Settings.Ragebot.FireRate then
+                getgenv().RagebotLastFire = tick()
+                mouse1click()
+            end
+        end
+    end
+    
+    -- ═══════════════════════════════════════════════════════════════════
+    -- THIRD PERSON CAMERA
+    -- ═══════════════════════════════════════════════════════════════════
+    local thirdPersonActive = Settings.ThirdPerson.Enabled and IsKeybindActive("ThirdPersonKeybind")
+    if thirdPersonActive then
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.CameraOffset = Vector3.new(0, 0, -Settings.ThirdPerson.Distance)
+            end
+        end
+    else
+        -- Reset camera offset when disabled
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.CameraOffset.Z ~= 0 then
+                humanoid.CameraOffset = Vector3.new(0, 0, 0)
+            end
+        end
     end
 end)
 
@@ -1386,6 +1518,100 @@ SilentAimSettingsSection:Dropdown({
 })
 
 -- ═══════════════════════════════════════════════════════════════════
+-- RAGEBOT SUBPAGE
+-- ═══════════════════════════════════════════════════════════════════
+
+local RagebotSubPage = CombatPage:SubPage({
+    Name = "Ragebot",
+    Columns = 2
+})
+
+local RagebotSection = RagebotSubPage:Section({Name = "Ragebot", Side = 1})
+
+RagebotSection:Toggle({
+    Name = "Enabled",
+    Flag = "RagebotEnabled",
+    Default = false,
+    Callback = function(value)
+        Settings.Ragebot.Enabled = value
+    end
+}):Keybind({
+    Flag = "RagebotKeybind",
+    Default = Enum.KeyCode.X,
+    Mode = "Hold"
+})
+
+RagebotSection:Slider({
+    Name = "Fire Rate",
+    Flag = "RagebotFireRate",
+    Min = 0.01,
+    Max = 1,
+    Default = 0.1,
+    Decimals = 0.01,
+    Suffix = "s",
+    Callback = function(value)
+        Settings.Ragebot.FireRate = value
+    end
+})
+
+RagebotSection:Slider({
+    Name = "FOV",
+    Flag = "RagebotFOV",
+    Min = 50,
+    Max = 500,
+    Default = 200,
+    Decimals = 1,
+    Suffix = "px",
+    Callback = function(value)
+        Settings.Ragebot.FOV = value
+    end
+})
+
+RagebotSection:Dropdown({
+    Name = "Target Part",
+    Flag = "RagebotTargetPart",
+    Items = {"Head", "HumanoidRootPart", "UpperTorso"},
+    Default = "Head",
+    Callback = function(value)
+        Settings.Ragebot.TargetPart = value
+    end
+})
+
+RagebotSection:Toggle({
+    Name = "Team Check",
+    Flag = "RagebotTeamCheck",
+    Default = true,
+    Callback = function(value)
+        Settings.Ragebot.TeamCheck = value
+    end
+})
+
+-- Weapon Section
+local WeaponSection = RagebotSubPage:Section({Name = "Weapon", Side = 2})
+
+WeaponSection:Toggle({
+    Name = "No Spread",
+    Flag = "NoSpreadEnabled",
+    Default = false,
+    Callback = function(value)
+        Settings.NoSpread.Enabled = value
+    end
+}):Keybind({
+    Flag = "NoSpreadKeybind",
+    Default = Enum.KeyCode.G,
+    Mode = "Toggle"
+})
+
+WeaponSection:Toggle({
+    Name = "Auto Reload",
+    Flag = "AutoReloadEnabled",
+    Default = false,
+    Callback = function(value)
+        Settings.AutoReload.Enabled = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════
 -- VISUALS TAB
 -- ═══════════════════════════════════════════════════════════════════
 
@@ -1708,6 +1934,35 @@ MovementSection:Toggle({
     Default = false,
     Callback = function(value)
         Settings.Movement.InfiniteJump = value
+    end
+})
+
+-- Camera Section
+local CameraSection = MiscPage:Section({Name = "Camera", Side = 1})
+
+CameraSection:Toggle({
+    Name = "Third Person",
+    Flag = "ThirdPersonEnabled",
+    Default = false,
+    Callback = function(value)
+        Settings.ThirdPerson.Enabled = value
+    end
+}):Keybind({
+    Flag = "ThirdPersonKeybind",
+    Default = Enum.KeyCode.V,
+    Mode = "Toggle"
+})
+
+CameraSection:Slider({
+    Name = "Distance",
+    Flag = "ThirdPersonDistance",
+    Min = 5,
+    Max = 30,
+    Default = 10,
+    Decimals = 1,
+    Suffix = "",
+    Callback = function(value)
+        Settings.ThirdPerson.Distance = value
     end
 })
 
